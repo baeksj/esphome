@@ -1,0 +1,174 @@
+substitutions:
+  name: zb-gw03-coordinator
+  device_description: "ZB-GW03 eWeLink Ethernet Zigbee Gateway based Zigbee Coordinator"
+  stream_port: "6638"
+
+# GPIO15 LedLink (red led)
+# GPIO14 Led_i 1 (green led)
+# GPIO16 ETH POWER
+# GPIO18 ETH MDIO
+# GPIO23 ETH MDC
+# GPIO34 Button 1
+# GPIO12 Zigbee RST 2
+# GPIO13 Zigbee RST 1
+# GPIO02 Zigbee Tx
+# GPIO04 Zigbee Rx
+# GPIO32 I2C SCL 1
+# GPIO33 I2C SDA 1
+
+esphome:
+  name: ${name}
+  comment: ${device_description}
+  project:
+    name: "syssi.esphome-zb-gw03"
+    version: 2.0.1
+  on_boot:
+    priority: 600
+    then:
+      - switch.turn_off: download_mode
+      - switch.turn_on: zigbee_reset
+
+esp32:
+  board: esp-wrover-kit
+  framework:
+    type: esp-idf
+
+dashboard_import:
+  package_import_url: github://baeksj/esphome/zb-gw03-coordinator.yaml@main
+  import_full_config: false # or true
+
+external_components:
+  - source: github://tube0013/esphome-stream-server-v2
+
+ota:
+
+logger:
+  level: DEBUG
+
+api:
+
+ethernet:
+  type: LAN8720
+  mdc_pin: GPIO23
+  mdio_pin: GPIO18
+  clk_mode: GPIO17_OUT
+  phy_addr: 1
+  power_pin: GPIO16
+
+status_led:
+  pin:
+    # red led
+    number: GPIO15
+    inverted: true
+
+light:
+  - platform: monochromatic
+    output: output0
+    id: green_led
+    internal: true
+
+output:
+  - platform: ledc
+    pin: GPIO14
+    id: output0
+    inverted: true
+
+i2c:
+  - id: i2c_bus
+    sda: GPIO33
+    scl: GPIO32
+    scan: true
+
+binary_sensor:
+  - platform: gpio
+    name: "${name} zigbee reset button"
+    pin:
+      number: GPIO34
+      inverted: true
+    on_press:
+      - switch.turn_off: download_mode
+      - switch.turn_on: zigbee_reset
+  - platform: stream_server
+    name: "Stream connected"
+    stream_server: ss
+    on_press:
+      then:
+        - light.turn_off: green_led
+    on_release:
+      then:
+        - light.turn_on: green_led
+
+mdns:
+  services:
+    - service: _tube_zb_gw_efr32
+      protocol: _tcp
+      port: "${stream_port}"
+      txt:
+        name: ZB-GW03
+        version: 1.0
+        radio_type: ezsp
+        baud_rate: 115200
+        data_flow_control: software
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+uart:
+  id: uart_zigbee
+  rx_pin: GPIO4
+  tx_pin: GPIO2
+  baud_rate: 115200
+
+stream_server:
+  id: ss
+  uart_id: uart_zigbee
+  port: "${stream_port}"
+
+switch:
+  - platform: restart
+    name: "${name} restart"
+
+  - platform: template
+    id: zigbee_reset
+    name: "${name} zigbee reset"
+    turn_on_action:
+      - switch.turn_on: zigbee_rst
+      - delay: 10ms
+      - switch.turn_off: zigbee_rst
+
+  # SM-011 V1.0 nRST
+  - platform: gpio
+    id: zigbee_rst
+    pin: GPIO13
+    name: "${name} zigbee nRST"
+    inverted: true
+    internal: true
+    restore_mode: ALWAYS_OFF
+
+  # SM-011 V1.0 PA00
+  - platform: gpio
+    id: download_mode
+    pin: GPIO12
+    name: "${name} Zigbee download mode"
+    inverted: true
+    restore_mode: ALWAYS_OFF
+
+sensor:
+  - platform: uptime
+    name: Uptime
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: Ethernet IP
+  - platform: template
+    name: "Stream port"
+    lambda: |-
+      return {"${stream_port}"};
+    update_interval: 60s
