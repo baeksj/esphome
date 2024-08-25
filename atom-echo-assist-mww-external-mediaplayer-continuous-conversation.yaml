@@ -1,5 +1,5 @@
 substitutions:
-  name: "m5stack-atom-echo-cimsil"
+  name: "m5stack-atom-echo-geosil"
   friendly_name: M5Stack Atom Echo
   micro_wake_word_model: okay_nabu  # alexa, hey_jarvis, hey_mycroft are also supported
 
@@ -21,7 +21,7 @@ esp32:
 logger:
 api:
   encryption:
-    key: !secret api_enc_key
+    key: !secret api_encryption_key
   services:
     - service: set_text_value
       variables:
@@ -49,6 +49,9 @@ globals:
     type: int
     restore_value: false
     initial_value: ${voice_assist_not_ready_phase_id}
+  - id: hass_media_player_store
+    type: std::string
+    restore_value: true
 
 button:
   - platform: factory_reset
@@ -149,16 +152,17 @@ voice_assistant:
                     condition: #10초 경과하여 대화 중지
                       lambda: return !(id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
                     then:
+                      - voice_assistant.stop:
                       - switch.turn_on: stop_conversation
+                      - delay: 1s
+
           - if:
               condition:
-                - switch.is_on: stop_conversation #대화중지 케이스 처리
+                or:
+                  - switch.is_off: continued_conversation
+                  - switch.is_on: stop_conversation
               then:
-                - voice_assistant.stop
-                - micro_wake_word.stop:
-                - delay: 1s
                 - script.execute: reset_led
-                - script.wait: reset_led
                 - micro_wake_word.start:
         else:
           - voice_assistant.start_continuous:
@@ -408,6 +412,12 @@ text_sensor:
   - platform: template
     name: "Media Player Entity Id"
     id: hass_media_player
+    lambda: |-
+      return id(hass_media_player_store);
+    on_value:
+      then:
+        - lambda: |-
+            id(hass_media_player_store) = x.c_str();
 
 external_components:
   - source: github://pr#5230
