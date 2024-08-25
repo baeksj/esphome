@@ -1,5 +1,5 @@
 substitutions:
-  name: "m5stack-atom-echo"
+  name: "m5stack-atom-echo-cimsil"
   friendly_name: M5Stack Atom Echo
   micro_wake_word_model: okay_nabu  # alexa, hey_jarvis, hey_mycroft are also supported
 
@@ -22,6 +22,14 @@ logger:
 api:
   encryption:
     key: !secret api_enc_key
+  services:
+    - service: set_text_value
+      variables:
+        value: string
+      then:
+        - text_sensor.template.publish:
+            id: hass_media_player
+            state: !lambda 'return value;'
 
 http_request:
 
@@ -89,6 +97,10 @@ voice_assistant:
         red: 0%
         green: 0%
         effect: "Fast Pulse"
+  on_stt_end:
+    - text_sensor.template.publish:
+        id: text_request
+        state: !lambda return x;
   on_tts_start:
     - light.turn_on:
         id: led
@@ -97,11 +109,14 @@ voice_assistant:
         green: 0%
         brightness: 100%
         effect: none
+    - text_sensor.template.publish:
+        id: text_response
+        state: !lambda return x;
   on_tts_end:
     - homeassistant.service:
         service: media_player.play_media
         data:
-          entity_id: media_player.cimsil_googlehome_mini
+          entity_id: !lambda 'return id(hass_media_player).state;'
           media_content_id: !lambda 'return x;'
           media_content_type: music
           announce: "true"
@@ -119,15 +134,25 @@ voice_assistant:
         condition:
           lambda: return id(wake_word_engine_location).state == "On device";
         then:
-          - voice_assistant.start:
-          - script.execute: reset_led
-          - wait_until:
-              condition:
-                lambda: return (id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
-              timeout: 10s
           - if:
               condition:
-                lambda: return !(id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
+                - switch.is_on: continued_conversation #연속대화
+                - switch.is_off: stop_conversation #대화중지
+              then:
+                - voice_assistant.start: #대화재시작
+                - script.execute: reset_led
+                - wait_until:
+                    condition:
+                      lambda: return (id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
+                    timeout: 10s
+                - if:
+                    condition: #10초 경과하여 대화 중지
+                      lambda: return !(id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
+                    then:
+                      - switch.turn_on: stop_conversation
+          - if:
+              condition:
+                - switch.is_on: stop_conversation #대화중지 케이스 처리
               then:
                 - voice_assistant.stop
                 - micro_wake_word.stop:
@@ -317,6 +342,18 @@ switch:
     on_turn_on:
       - delay: 15min
       - switch.turn_off: timer_ringing
+  - platform: template
+    name: Continued conversation
+    id: continued_conversation
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+  - platform: template
+    name: Stop conversation
+    id: stop_conversation
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
 
 select:
   - platform: template
@@ -347,6 +384,31 @@ select:
             - delay: 500ms
             - micro_wake_word.start
 
+text_sensor:
+  - id: text_request
+    name: Assist query
+    platform: template
+    on_value:
+      lambda: |-
+        if(id(text_request).state.length()>32) {
+          std::string name = id(text_request).state.c_str();
+          std::string truncated = esphome::str_truncate(name.c_str(),31);
+          id(text_request).state = (truncated+"...").c_str();
+        }
+  - id: text_response
+    name: Assist reply
+    platform: template
+    on_value:
+      lambda: |-
+        if(id(text_response).state.length()>32) {
+          std::string name = id(text_response).state.c_str();
+          std::string truncated = esphome::str_truncate(name.c_str(),31);
+          id(text_response).state = (truncated+"...").c_str();
+        }
+  - platform: template
+    name: "Media Player Entity Id"
+    id: hass_media_player
+
 external_components:
   - source: github://pr#5230
     components:
@@ -364,6 +426,7 @@ file:
 
 micro_wake_word:
   on_wake_word_detected:
+    - switch.turn_off: stop_conversation
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
   vad:
