@@ -1,5 +1,5 @@
 substitutions:
-  name: "m5stack-atom-echo-geosil"
+  name: "m5stack-atom-echo-cimsil"
   friendly_name: M5Stack Atom Echo
   micro_wake_word_model: okay_nabu  # alexa, hey_jarvis, hey_mycroft are also supported
 
@@ -81,6 +81,7 @@ voice_assistant:
   id: va
   microphone: echo_microphone
   speaker: echo_speaker
+  #media_player: adf_media_player
   noise_suppression_level: 2
   auto_gain: 31dBFS
   volume_multiplier: 1.0
@@ -138,29 +139,24 @@ voice_assistant:
           lambda: return id(wake_word_engine_location).state == "On device";
         then:
           - if:
-              condition:
-                - switch.is_on: continued_conversation #연속대화
-                - switch.is_off: stop_conversation #대화중지
+              condition: #연속대화 && 대화중지 아님
+                - switch.is_on: continued_conversation 
+                - switch.is_off: stop_conversation
               then:
                 - voice_assistant.start: #대화재시작
                 - script.execute: reset_led
                 - wait_until:
                     condition:
                       lambda: return (id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
-                    timeout: 10s
+                    timeout: !lambda "return id(silence_timeout).state * 1000;"
                 - if:
-                    condition: #10초 경과하여 대화 중지
+                    condition: #timout 경과하여 대화 중지
                       lambda: return !(id(voice_assistant_phase) == ${voice_assist_thinking_phase_id});
                     then:
-                      - voice_assistant.stop:
                       - switch.turn_on: stop_conversation
-                      - delay: 1s
-
           - if:
               condition:
-                or:
-                  - switch.is_off: continued_conversation
-                  - switch.is_on: stop_conversation
+                - switch.is_off: continued_conversation
               then:
                 - script.execute: reset_led
                 - micro_wake_word.start:
@@ -213,6 +209,7 @@ voice_assistant:
     - wait_until:
         not:
           speaker.is_playing:
+          #media_player.is_playing:
     - light.turn_off: led
     - switch.turn_off: timer_ringing
     - if:
@@ -350,7 +347,7 @@ switch:
     name: Continued conversation
     id: continued_conversation
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
+    restore_mode: RESTORE_DEFAULT_ON
     entity_category: config
   - platform: template
     name: Stop conversation
@@ -358,6 +355,22 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     entity_category: config
+    on_turn_on:
+      - if:
+          condition:
+            lambda: return id(wake_word_engine_location).state == "On device";
+          then:
+            - wait_until:
+                condition:
+                  not:
+                    - speaker.is_playing
+                timeout: 10s 
+            - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+            - voice_assistant.stop
+            - micro_wake_word.stop:
+            - delay: 1s
+            - micro_wake_word.start:
+            - script.execute: reset_led  
 
 select:
   - platform: template
@@ -419,6 +432,20 @@ text_sensor:
         - lambda: |-
             id(hass_media_player_store) = x.c_str();
 
+number:
+  - platform: template
+    name: "Silence timeout"
+    id: silence_timeout
+    optimistic: true
+    initial_value: 10.0
+    min_value: 0.0
+    max_value: 180.0
+    step: 1.0
+    restore_value: True
+    entity_category: config
+
+esp_adf:
+
 external_components:
   - source: github://pr#5230
     components:
@@ -427,8 +454,6 @@ external_components:
   - source: github://jesserockz/esphome-components
     components: [file]
     refresh: 0s
-
-esp_adf:
 
 file:
   - id: timer_finished_wave_file
